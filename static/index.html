@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>My単語帳</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+        <script>
+            window.MathJax = {
+                tex: {
+                    inlineMath: [['$', '$'], ['\\(', '\\)']],
+                    displayMath: [['$$', '$$'], ['\\[', '\\]']]
+                }
+            };
+        </script>
+        <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    </head>
+<body class="bg-gray-100 p-4">
+    <div id="app" class="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md">
+<div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">
+  <strong>My単語帳</strong> — 単語（特に英単語）の登録・検索・テストができる学習アプリの簡易版です。最初に8語の例題を収録しています。追加した単語と学習結果は、このブラウザ内に保存され、他の利用者とは共有されません。
+  <button type="button" onclick="if(confirm('登録内容を初期状態に戻しますか？')) resetDemoWords()" class="mt-2 block text-xs underline">登録内容を初期状態に戻す</button>
+</div>
+        
+        <div class="flex mb-4 border-b">
+            <button @click="currentTab = 'register'" :class="{'border-b-2 border-blue-500 font-bold text-blue-500': currentTab === 'register'}" class="flex-1 pb-2 text-center text-gray-500">登録・一覧</button>
+            <button @click="startTest" :class="{'border-b-2 border-blue-500 font-bold text-blue-500': currentTab === 'test'}" class="flex-1 pb-2 text-center text-gray-500">テスト</button>
+        </div>
+
+        <div class="mb-6 bg-blue-50 p-3 rounded-lg border border-blue-100">
+            <label class="text-sm font-bold text-blue-800 block mb-2">現在の表示・テスト対象 / 検索</label>
+            <div class="flex space-x-2">
+                <select v-model="selectedCategory" class="w-1/2 border p-2 rounded text-sm bg-white">
+                    <option value="">すべてのカテゴリ</option>
+                    <option v-for="cat in uniqueCategories" :key="cat" :value="cat">{{ cat }}</option>
+                </select>
+                <input v-model="searchQuery" placeholder="単語や意味で検索..." class="w-1/2 border p-2 rounded text-sm bg-white">
+            </div>
+        </div>
+
+        <div v-if="currentTab === 'register'">
+            
+            <div class="mb-6 space-y-2 border-b pb-4">
+                <h2 class="text-sm font-bold text-gray-700">1件ずつ登録</h2>
+                <input v-model="newCategory" placeholder="カテゴリ (例: 長文読解)" class="w-full border p-2 rounded text-sm bg-gray-50">
+                <input v-model="newTerm" placeholder="単語" lang="en" inputmode="latin" class="w-full border p-2 rounded">
+                <input v-model="newMeaning" placeholder="意味" lang="ja" class="w-full border p-2 rounded">
+                <button @click="addWord" class="w-full bg-blue-500 hover:bg-blue-600 text-white p-2 rounded font-bold transition">登録する</button>
+            </div>
+
+            <div class="mb-4 space-y-2">
+                <h2 class="text-sm font-bold text-gray-700">CSVファイルから一括登録</h2>
+                <input v-model="csvCategory" placeholder="カテゴリ (例: 基本の1000語)" class="w-full border p-2 rounded text-sm bg-gray-50">
+                <input type="file" accept=".csv" ref="fileInput" class="w-full border p-2 rounded text-sm cursor-pointer bg-white">
+                <button @click="uploadCSV" class="w-full bg-green-500 hover:bg-green-600 text-white p-2 rounded font-bold transition mt-2">一括登録する</button>
+            </div>
+
+            <div class="flex justify-between items-end mt-8 mb-2">
+                <h2 class="text-lg font-bold">登録済み単語 ({{ filteredWords.length }}件)</h2>
+                <label v-if="filteredWords.length > 0" class="flex items-center text-sm cursor-pointer font-bold text-gray-600 hover:text-gray-800 bg-gray-200 px-3 py-1 rounded transition">
+                    <input type="checkbox" v-model="selectAll" class="mr-2 w-4 h-4 text-blue-600 rounded cursor-pointer">
+                    すべて選択
+                </label>
+            </div>
+
+            <div v-if="selectedWordIds.length > 0" class="bg-blue-50 border border-blue-200 p-2 mb-2 rounded flex justify-between items-center">
+                <span class="text-sm font-bold text-blue-700">{{ selectedWordIds.length }}件選択中</span>
+                <div class="space-x-2">
+                    <button @click="copySelectedWords" class="bg-blue-500 text-white px-3 py-1 rounded text-sm font-bold hover:bg-blue-600">プロンプト用にコピー</button>
+                    <button @click="bulkDelete" class="bg-red-500 text-white px-3 py-1 rounded text-sm font-bold hover:bg-red-600">削除</button>
+                    <button @click="selectedWordIds = []" class="bg-gray-400 text-white px-3 py-1 rounded text-sm font-bold hover:bg-gray-500">キャンセル</button>
+                </div>
+            </div>
+
+            <ul class="max-h-60 overflow-y-auto pr-2">
+                <li v-for="word in filteredWords" :key="word.id" class="border-b py-3 flex flex-col">
+                    
+                    <div v-if="editingWordId === word.id" class="w-full space-y-2 bg-yellow-50 p-2 rounded border border-yellow-200">
+                        <input v-model="editForm.category" placeholder="カテゴリ" class="w-full border p-1 rounded text-sm bg-white">
+                        <input v-model="editForm.term" placeholder="単語" lang="en" inputmode="latin" class="w-full border p-1 rounded text-sm bg-white">
+                        <input v-model="editForm.meaning" placeholder="意味" lang="ja" class="w-full border p-1 rounded text-sm bg-white">
+                        <div class="flex space-x-2 pt-1">
+                            <button @click="saveEdit(word.id)" class="flex-1 bg-blue-500 text-white p-1 rounded text-sm font-bold">保存</button>
+                            <button @click="cancelEdit" class="flex-1 bg-gray-400 text-white p-1 rounded text-sm font-bold">キャンセル</button>
+                        </div>
+                    </div>
+
+                    <div v-else class="flex justify-between items-center w-full">
+                        <div class="flex items-center flex-1 pr-2">
+                            <input type="checkbox" :value="word.id" v-model="selectedWordIds" class="mr-3 w-4 h-4 text-blue-600 rounded cursor-pointer">
+                            <div>
+                                <span class="text-xs text-blue-500 font-bold border border-blue-200 px-1 rounded mr-1">{{ word.category }}</span>
+                                <span class="font-bold">{{ word.term }}</span>
+                                <span class="text-gray-600 text-sm block mt-1">{{ word.meaning }}</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end space-y-1">
+                            <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full whitespace-nowrap mb-1">正解: {{ word.correct_count }}回</span>
+                            <div class="flex space-x-1">
+                                <button @click="startEdit(word)" class="text-xs text-gray-500 border border-gray-300 px-3 py-1 rounded hover:bg-gray-100">編集</button>
+                                <button @click="deleteWord(word.id)" class="text-xs text-red-500 border border-red-200 px-3 py-1 rounded hover:bg-red-50">削除</button>
+                            </div>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <div v-if="currentTab === 'test'">
+            <div v-if="testWords.length === 0" class="text-center py-10">
+                <p class="text-gray-500">対象の単語がありません。</p>
+            </div>
+            
+            <div v-else-if="currentTestIndex < testWords.length" class="text-center">
+                <div class="bg-white p-3 rounded-lg border mb-3 shadow-sm grid grid-cols-3 gap-2 text-xs font-bold text-center">
+                    <div class="bg-red-50 text-red-600 p-1.5 rounded border border-red-100">
+                        0回: <span class="text-sm">{{ testStats.c0 }}</span>
+                    </div>
+                    <div class="bg-orange-50 text-orange-600 p-1.5 rounded border border-orange-100">
+                        1回: <span class="text-sm">{{ testStats.c1 }}</span>
+                    </div>
+                    <div class="bg-yellow-50 text-yellow-600 p-1.5 rounded border border-yellow-200">
+                        2回: <span class="text-sm">{{ testStats.c2 }}</span>
+                    </div>
+                    <div class="bg-lime-50 text-lime-600 p-1.5 rounded border border-lime-200">
+                        3回: <span class="text-sm">{{ testStats.c3 }}</span>
+                    </div>
+                    <div class="bg-green-50 text-green-600 p-1.5 rounded border border-green-200">
+                        4回: <span class="text-sm">{{ testStats.c4 }}</span>
+                    </div>
+                    <div class="bg-blue-50 text-blue-600 p-1.5 rounded border border-blue-200">
+                        5回以上!: <span class="text-sm">{{ testStats.c5plus }}</span>
+                    </div>
+                </div>
+
+                <p class="text-sm text-gray-500 mb-2">問題 {{ currentTestIndex + 1 }} / {{ testWords.length }}</p>
+                <div class="bg-gray-50 rounded-lg p-8 mb-6 border">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-xs text-blue-500 font-bold border border-blue-200 px-2 py-1 rounded-full inline-block">{{ currentTestWord.category }}</span>
+                        <span class="text-xs bg-green-100 text-green-800 px-3 py-1 rounded-full font-bold">
+                            正解: {{ currentTestWord.correct_count }}回
+                        </span>
+                    </div>
+                    <h2 class="text-3xl font-bold mb-4">{{ currentTestWord.term }}</h2>
+                    <div v-if="isAnswerVisible" class="text-xl text-blue-600 font-bold border-t pt-4">
+                        {{ currentTestWord.meaning }}
+
+                        <div class="mt-4 p-3 bg-blue-50 rounded text-sm text-gray-700 font-normal text-left">
+                            <span class="font-bold text-blue-800 text-xs">例文 :</span><br>
+                            <div v-if="currentTestWord.example" class="whitespace-pre-wrap leading-relaxed mt-2">
+                                {{ currentTestWord.example }}
+                            </div>
+                            <div v-else-if="!isGeneratingExample">
+                                <button @click="generateAIExample" class="mt-1 bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded text-xs font-bold transition">
+                                    AIで例文を作成する
+                                </button>
+                            </div>
+                            <div v-else class="text-blue-500 font-bold mt-1">
+                                AIが例文を作成中... (数秒)
+                            </div>
+                        </div>
+                    </div>
+
+                    <button v-if="!isAnswerVisible" @click="showAnswer" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 p-3 rounded font-bold transition mt-4">答えを見る</button>
+                    <div v-else class="flex space-x-2 mt-4">
+                        <button @click="answer(false)" class="flex-1 bg-red-500 hover:bg-red-600 text-white p-3 rounded font-bold transition">間違えた</button>
+                        <button @click="answer(true)" class="flex-1 bg-green-500 hover:bg-green-600 text-white p-3 rounded font-bold transition">正解！</button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="text-center py-10">
+                <h2 class="text-2xl font-bold text-blue-500 mb-2">テスト完了！</h2>
+                <button @click="startTest" class="bg-blue-500 text-white px-6 py-2 rounded font-bold">もう一度テストする</button>
+            </div>
+        </div>
+
+    </div>
+
+<script>
+// 初期単語と操作結果は利用者のブラウザ内だけで管理
+// 私用のアプリの API / DATABASE_URL / Gemini API は使用しない
+(function () {
+  const KEY = 'flashcard-public-v2';
+  const initial = [
+    {term:'achieve', meaning:'達成する', category:'英単語', correct_count:1, example:'1. We can achieve our goal. / 訳: 私たちは目標を達成できます。'},
+    {term:'adapt', meaning:'適応する', category:'英単語', correct_count:0, example:'1. We adapt to change. / 訳: 私たちは変化に適応します。'},
+    {term:'analyze', meaning:'分析する', category:'英単語', correct_count:2, example:'1. We analyze the results. / 訳: 私たちは結果を分析します。'},
+    {term:'collaborate', meaning:'協力する', category:'英単語', correct_count:0, example:'1. Team members collaborate. / 訳: チームのメンバーは協力します。'},
+    {term:'efficient', meaning:'効率的な', category:'英単語', correct_count:3, example:'1. This is an efficient method. / 訳: これは効率的な方法です。'},
+    {term:'improve', meaning:'改善する', category:'英単語', correct_count:1, example:'1. We improve our design. / 訳: 私たちは設計を改善します。'},
+    {term:'network', meaning:'ネットワーク', category:'IT系英単語', correct_count:0, example:'1. The network connects computers. / 訳: ネットワークはコンピュータをつなぎます。'},
+    {term:'server', meaning:'サーバー', category:'IT系英単語', correct_count:1, example:'1. The server stores information. / 訳: サーバーは情報を保存します。'}
+  ].map((w, i) => ({id:i+1, ...w}));
+  function load() {
+    try {
+      const saved = localStorage.getItem(KEY);
+      if (saved !== null) {
+        const data = JSON.parse(saved);
+        if (Array.isArray(data)) return data;
+      }
+    } catch (e) { console.warn('Local storage unavailable', e); }
+    return structuredClone(initial);
+  }
+  function save(words) { try { localStorage.setItem(KEY,JSON.stringify(words)); } catch(e) {console.warn(e);} }
+  window.resetDemoWords = function () { save(structuredClone(initial)); location.reload(); };
+  function json(data,status=200) {return Promise.resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}));}
+  function parseCSV(text) {
+    let rows=[],row=[],cell='',quoted=false;
+    for (let i=0;i<text.length;i++) {
+      const ch=text[i];
+      if (ch==='"') { if(quoted && text[i+1]==='"'){cell+='"';i++;} else quoted=!quoted; }
+      else if(ch===',' && !quoted){row.push(cell);cell='';}
+      else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r' && text[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(x=>x.trim()))rows.push(row);row=[];}
+      else cell+=ch;
+    }
+    row.push(cell);if(row.some(x=>x.trim()))rows.push(row);
+    return rows;
+  }
+  window.demoFetch = async function (url,opts={}) {
+    const method=(opts.method||'GET').toUpperCase();
+    const route=String(url).split('?')[0];
+    const words=load();
+    const payload=opts.body && !(opts.body instanceof FormData) ? JSON.parse(opts.body) : {};
+    if (route==='/api/words' && method==='GET') return json(words);
+    if (route==='/api/words' && method==='POST') {
+      const next={id:Math.max(0,...words.map(w=>w.id))+1,term:payload.term,meaning:payload.meaning,category:payload.category||'未分類',correct_count:0,example:null};
+      words.push(next);save(words);return json(next);
+    }
+    if (route==='/api/words/bulk-delete' && method==='POST') {
+      const ids=new Set(payload.word_ids||[]);save(words.filter(w=>!ids.has(w.id)));return json({message:'削除しました'});
+    }
+    if (route==='/api/words/csv' && method==='POST') {
+      const form=opts.body;const file=form.get('file');const category=form.get('category')||'未分類';
+      const rows=parseCSV(await file.text());let added=0,updated=0;
+      for (const [termRaw,meaningRaw,exampleRaw] of rows) {
+        const term=(termRaw||'').trim(),meaning=(meaningRaw||'').trim(); if(!term||!meaning)continue;
+        const current=words.find(w=>w.term===term && w.category===category);
+        if(current){if(exampleRaw?.trim())current.example=exampleRaw.trim();updated++;}
+        else{words.push({id:Math.max(0,...words.map(w=>w.id))+1,term,meaning,category,correct_count:0,example:exampleRaw?.trim()||null});added++;}
+      }
+      save(words);return json({message:`新規追加: ${added}件 / 上書き更新: ${updated}件`});
+    }
+    if (route==='/api/generate-example' && method==='POST') {
+  return json({
+    example: '個人用の完全版では、生成AI（Gemini）を活用し、登録した英単語に応じた複数の英文と日本語訳を自動生成できます。この公開版ではAIによる例文生成は実行されません。'
+  });
+}
+    const match=route.match(/^\/api\/words\/(\d+)(?:\/(result|example))?$/);
+    if(match){
+      const id=Number(match[1]),type=match[2];const w=words.find(w=>w.id===id);
+      if(!w)return json({error:'Not found'},404);
+      if(method==='DELETE'&&!type){save(words.filter(x=>x.id!==id));return json({message:'削除しました'});}
+      if(method==='PUT'&&type==='result'){if(payload.is_correct)w.correct_count++;save(words);return json(w);}
+      if(method==='PUT'&&type==='example'){w.example=payload.example;save(words);return json({message:'ok'});}
+      if(method==='PUT'&&!type){Object.assign(w,{term:payload.term,meaning:payload.meaning,category:payload.category});save(words);return json(w);}
+    }
+    return json({error:'Unsupported demo endpoint'},404);
+  };
+})();
+</script>
+    <script>
+        const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const currentTab = ref('register');
+                const words = ref([]);
+                
+                const newTerm = ref('');
+                const newMeaning = ref('');
+                const newCategory = ref('長文読解用');
+                
+                const csvCategory = ref('基本の1000語');
+                const fileInput = ref(null);
+
+                const selectedCategory = ref('');
+                const searchQuery = ref('');
+
+                const testWords = ref([]);
+                const currentTestIndex = ref(0);
+                const isAnswerVisible = ref(false);
+                const currentExample = ref('');
+
+                const editingWordId = ref(null);
+                const editForm = ref({ term: '', meaning: '', category: '' });
+
+                const selectedWordIds = ref([]);
+
+                const isGeneratingExample = ref(false);
+
+                const selectAll = computed({
+                    get: () => {
+                        return filteredWords.value.length > 0 && selectedWordIds.value.length === filteredWords.value.length;
+                    },
+                    set: (value) => {
+                        if (value) {
+                            selectedWordIds.value = filteredWords.value.map(w => w.id);
+                        } else {
+                            selectedWordIds.value = [];
+                        }
+                    }
+                });
+
+                const renderMath = async () => {
+                    await nextTick();
+                    if (window.MathJax) {
+                        window.MathJax.typesetPromise();
+                    }
+                };
+
+                const fetchWords = async () => {
+                    const response = await demoFetch('/api/words');
+                    words.value = await response.json();
+                    selectedWordIds.value = [];
+                    renderMath(); 
+                };
+
+                const uniqueCategories = computed(() => {
+                    const categories = words.value.map(w => w.category);
+                    return [...new Set(categories)];
+                });
+
+                const filteredWords = computed(() => {
+                    let result = words.value;
+
+                    if (selectedCategory.value) {
+                        result = result.filter(w => w.category === selectedCategory.value);
+                    }
+
+                    if (searchQuery.value) {
+                        const query = searchQuery.value.toLowerCase();
+                        result = result.filter(w => 
+                            w.term.toLowerCase().includes(query) || 
+                            w.meaning.includes(query)
+                        );
+                    }
+
+                    return result.sort((a, b) => a.term.localeCompare(b.term));
+                });
+
+                const currentTestWord = computed(() => testWords.value[currentTestIndex.value] || {});
+
+                const testStats = computed(() => {
+                    let c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0, c5plus = 0;
+
+                    testWords.value.forEach(w => {
+                        const count = w.correct_count || 0;
+                        if (count === 0) c0++;
+                        else if (count === 1) c1++;
+                        else if (count === 2) c2++;
+                        else if (count === 3) c3++;
+                        else if (count === 4) c4++;
+                        else c5plus++;
+                    });
+
+                    return { c0, c1, c2, c3, c4, c5plus };
+                });
+
+                const toHalfWidth = (str) => {
+                    if (!str) return str;
+                    return str.replace(/[！-～]/g, (s) => {
+                        return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+                    }).replace(/ /g, ' ');
+                };
+
+                const generateAIExample = async () => {
+                    isGeneratingExample.value = true;
+                    const word = currentTestWord.value;
+                    try {
+                        const response = await demoFetch('/api/generate-example', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ term: word.term, meaning: word.meaning })
+                        });
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.example.startsWith("🤖")) {
+                                alert(data.example);
+                            } else {
+                                word.example = data.example;
+                                
+                                demoFetch(`/api/words/${word.id}/example`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ example: data.example })
+                                });
+                            }
+                        } else {
+                            alert("AIの生成に失敗しました");
+                        }
+                    } catch (error) {
+                        alert("通信エラーが発生しました");
+                    } finally {
+                        isGeneratingExample.value = false;
+                    }
+                };
+
+                const answer = (isCorrect) => {
+                    const wordId = currentTestWord.value.id;
+
+                    demoFetch(`/api/words/${wordId}/result`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ is_correct: isCorrect })
+                    });
+
+                    if (isCorrect) {
+                        const wordInList = words.value.find(w => w.id === wordId);
+                        if (wordInList) wordInList.correct_count++;
+                    }
+
+                    currentTestIndex.value++;
+                    isAnswerVisible.value = false;
+                    isGeneratingExample.value = false;
+                    
+                    renderMath();
+                };
+
+                const addWord = async () => {
+                    if (!newTerm.value || !newMeaning.value) return;
+                    const formattedTerm = toHalfWidth(newTerm.value);
+                    
+                    try {
+                        const response = await demoFetch('/api/words', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                term: formattedTerm, 
+                                meaning: newMeaning.value,
+                                category: newCategory.value || '未分類'
+                            })
+                        });
+
+                        if (response.ok) {
+                            newTerm.value = '';
+                            newMeaning.value = '';
+                            await fetchWords(); 
+                        } else {
+                            alert("登録に失敗しました。時間をおいて再度お試しください。");
+                        }
+                    } catch (error) {
+                        alert("通信エラーが発生しました。");
+                    }
+                };
+
+                const uploadCSV = async () => {
+                    const file = fileInput.value.files[0];
+                    
+                    if (!file) {
+                        alert("CSVファイルを選択してください");
+                        return;
+                    }
+                    
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('category', csvCategory.value || '未分類');
+                    
+                    try {
+                        const response = await demoFetch('/api/words/csv', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const result = await response.json();
+                        alert(result.message);
+                        fetchWords();
+                    } catch (error) {
+                        alert("エラーが発生しました");
+                    }
+                    
+                    if (fileInput.value) fileInput.value.value = '';
+                };
+
+                const startEdit = (word) => {
+                    editingWordId.value = word.id;
+                    editForm.value = { term: word.term, meaning: word.meaning, category: word.category };
+                };
+
+                const cancelEdit = () => {
+                    editingWordId.value = null;
+                };
+
+                const saveEdit = async (wordId) => {
+                    if (!editForm.value.term || !editForm.value.meaning) return;
+                    editForm.value.term = toHalfWidth(editForm.value.term);
+                    await demoFetch(`/api/words/${wordId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(editForm.value)
+                    });
+                    editingWordId.value = null;
+                    fetchWords(); 
+                };
+
+                const deleteWord = async (wordId) => {
+                    if (!confirm("この単語を削除してもよろしいですか？")) return;
+                    await demoFetch(`/api/words/${wordId}`, { method: 'DELETE' });
+                    fetchWords();
+                };
+
+                const bulkDelete = async () => {
+                    if (!confirm(`${selectedWordIds.value.length}件の単語をまとめて削除しますか？`)) return;
+                    
+                    await demoFetch('/api/words/bulk-delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ word_ids: selectedWordIds.value })
+                    });
+                    fetchWords();
+                };
+
+                const copySelectedWords = async () => {
+                    const selected = words.value.filter(w => selectedWordIds.value.includes(w.id));
+                    const textToCopy = selected.map(w => w.term).join('\n');
+                    
+                    try {
+                        await navigator.clipboard.writeText(textToCopy);
+                        alert(`${selected.length}件の単語をコピーしました！Geminiのプロンプトに貼り付けてください。`);
+                        selectedWordIds.value = [];
+                    } catch (err) {
+                        alert("コピーに失敗しました。");
+                    }
+                };
+
+                const startTest = () => {
+                    currentTab.value = 'test';
+                    currentTestIndex.value = 0;
+                    isAnswerVisible.value = false;
+                    currentExample.value = '';
+                    
+                    const targetWords = [...filteredWords.value];
+                    
+                    for (let i = targetWords.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [targetWords[i], targetWords[j]] = [targetWords[j], targetWords[i]];
+                    }
+                    
+                    testWords.value = targetWords.sort((a, b) => a.correct_count - b.correct_count);
+                    renderMath();
+                };
+
+                const showAnswer = () => {
+                    isAnswerVisible.value = true;
+                    renderMath();
+                };
+
+
+                onMounted(fetchWords);
+
+                return { 
+                    currentTab, words, newTerm, newMeaning, newCategory, csvCategory, fileInput,
+                    selectedCategory, uniqueCategories, filteredWords,
+                    addWord, uploadCSV, testWords, currentTestIndex, isAnswerVisible, currentTestWord,
+                    startTest, answer,
+                    editingWordId, editForm, startEdit, cancelEdit, saveEdit, showAnswer,
+                    selectedWordIds, deleteWord, bulkDelete,
+                    selectAll, currentExample,
+                    isGeneratingExample, 
+                    generateAIExample,
+                    searchQuery,
+                    copySelectedWords,
+                    testStats
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
